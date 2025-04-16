@@ -9,8 +9,14 @@ from modules.stock_prediction import predict_stock_prices  # Module for stock pr
 import pymongo
 
 # Initialize MongoDB client with environment variable for cloud compatibility
-mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-client = pymongo.MongoClient(mongo_uri)
+mongo_uri = os.getenv("MONGO_URI", "mongodb+srv://Jai:Jai07ihub@cluster0.k4pik.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+try:
+    client.server_info()  # Trigger exception if cannot connect
+except pymongo.errors.ServerSelectionTimeoutError as err:
+    st.error("Cannot connect to MongoDB. Please check your connection string and cluster status.")
+    st.stop()
+
 db = client["financial_ai"]  # Database name
 budget_collection = db["budget"]
 transactions_collection = db["transactions"]
@@ -18,18 +24,30 @@ stocks_collection = db["stocks"]
 
 # Load budget from MongoDB
 def load_budget():
-    budget_data = list(budget_collection.find({}, {"_id": 0}))
-    return pd.DataFrame(budget_data) if budget_data else None
+    try:
+        budget_data = list(budget_collection.find({}, {"_id": 0}))
+        return pd.DataFrame(budget_data) if budget_data else None
+    except Exception as e:
+        st.error(f"Error loading budget data: {e}")
+        return None
 
 # Load transactions from MongoDB
 def load_transactions():
-    transactions = list(transactions_collection.find({}, {"_id": 0}))
-    return transactions if transactions else []
+    try:
+        transactions = list(transactions_collection.find({}, {"_id": 0}))
+        return transactions if transactions else []
+    except Exception as e:
+        st.error(f"Error loading transactions: {e}")
+        return []
 
 # Load stock purchases from MongoDB
 def load_stock_purchases():
-    stock_data = list(stocks_collection.find({}, {"_id": 0}))
-    return stock_data if stock_data else []
+    try:
+        stock_data = list(stocks_collection.find({}, {"_id": 0}))
+        return stock_data if stock_data else []
+    except Exception as e:
+        st.error(f"Error loading stock purchases: {e}")
+        return []
 
 # Initialize session state
 if "budget_data" not in st.session_state:
@@ -82,13 +100,19 @@ if menu == "Home":
             if "paid" in payment_status:
                 transaction = {"Category": payment_category, "Amount Paid (₹)": payment_amount}
                 st.session_state.transactions.append(transaction)
-                transactions_collection.insert_one(transaction)
+                try:
+                    transactions_collection.insert_one(transaction)
+                except Exception as e:
+                    st.error(f"Error saving transaction: {e}")
             st.success(payment_status)
 
         if st.button("Save Budget Data"):
-            budget_collection.delete_many({})
-            budget_collection.insert_many(budget_df.to_dict("records"))
-            st.success("Budget data saved successfully!")
+            try:
+                budget_collection.delete_many({})
+                budget_collection.insert_many(budget_df.to_dict("records"))
+                st.success("Budget data saved successfully!")
+            except Exception as e:
+                st.error(f"Error saving budget data: {e}")
     else:
         st.warning("Please enter your monthly income to generate the budget.")
 
@@ -134,9 +158,12 @@ elif menu == "Stock Prediction":
                 "Total Cost": total_cost
             }
 
-            stocks_collection.insert_one(stock_purchase)
-            st.session_state.stock_purchases.append(stock_purchase)
-            st.success(f"Successfully purchased {stock_quantity} of {stock_name} for ₹{total_cost}.")
+            try:
+                stocks_collection.insert_one(stock_purchase)
+                st.session_state.stock_purchases.append(stock_purchase)
+                st.success(f"Successfully purchased {stock_quantity} of {stock_name} for ₹{total_cost}.")
+            except Exception as e:
+                st.error(f"Error saving stock purchase: {e}")
         else:
             st.warning("Please fill in all fields correctly.")
 
@@ -146,9 +173,3 @@ elif menu == "Stock Prediction":
         st.dataframe(purchases_df)
     else:
         st.info("No stocks purchased yet.")
-
-# Run on assigned port (Render)
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8501))
-    import streamlit.web.bootstrap
-    streamlit.web.bootstrap.run("app.py", "", [], flag_options={"server.port": port})
