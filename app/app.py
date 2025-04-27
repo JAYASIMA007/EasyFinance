@@ -8,7 +8,7 @@ import os
 from modules.data_processing import calculate_budget, update_budget
 from modules.eda import generate_pie_chart
 from modules.upi_integration import process_payment
-from modules.stock_prediction import predict_stock_prices  # Your stock prediction module
+from modules.stock_prediction import predict_stock_prices
 
 # MongoDB Connection
 mongo_uri = os.getenv("MONGO_URI", "mongodb+srv://Jai:Jai07ihub@cluster0.k4pik.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
@@ -23,7 +23,7 @@ db = client["financial_ai"]
 budget_collection = db["budget"]
 transactions_collection = db["transactions"]
 stocks_collection = db["stocks"]
-users_collection = db["users"]  # Collection for user authentication
+users_collection = db["users"]
 
 # ----------------- Authentication Functions -----------------
 def signup_user(username, password):
@@ -80,9 +80,6 @@ def show_profile():
     # Display basic user details (here, we just show the username)
     st.write(f"### Username: {username}")
     
-    # You can add more user information here (e.g., email, user preferences, etc.)
-    # For now, we show only the username.
-    
     # Add logout button
     if st.button("Logout"):
         st.session_state["authenticated"] = False
@@ -91,20 +88,20 @@ def show_profile():
         st.rerun()  # Reload the page to show the login/signup screen
 
 # ----------------- Load Data Functions -----------------
-def load_budget():
-    budget_data = list(budget_collection.find({}, {"_id": 0}))
+def load_budget(username):
+    budget_data = list(budget_collection.find({"username": username}, {"_id": 0}))
     if budget_data:
         return pd.DataFrame(budget_data)
     return None
 
-def load_transactions():
-    transactions = list(transactions_collection.find({}, {"_id": 0}))
+def load_transactions(username):
+    transactions = list(transactions_collection.find({"username": username}, {"_id": 0}))
     if transactions:
         return transactions
     return []
 
-def load_stock_purchases():
-    stock_data = list(stocks_collection.find({}, {"_id": 0}))
+def load_stock_purchases(username):
+    stock_data = list(stocks_collection.find({"username": username}, {"_id": 0}))
     if stock_data:
         return stock_data
     return []
@@ -115,13 +112,13 @@ def main_app():
 
     # Initialize session state for budget and transactions
     if "budget_data" not in st.session_state:
-        st.session_state["budget_data"] = load_budget()
+        st.session_state["budget_data"] = load_budget(username)
 
     if "transactions" not in st.session_state:
-        st.session_state["transactions"] = load_transactions()
+        st.session_state["transactions"] = load_transactions(username)
 
     if "stock_purchases" not in st.session_state:
-        st.session_state["stock_purchases"] = load_stock_purchases()
+        st.session_state["stock_purchases"] = load_stock_purchases(username)
 
     st.set_page_config(page_title="Financial AI Assistant", page_icon="💸", layout="wide")
 
@@ -166,14 +163,14 @@ def main_app():
                 st.session_state["budget_data"] = updated_budget
 
                 if "paid" in payment_status:
-                    transaction = {"Category": payment_category, "Amount Paid (₹)": payment_amount}
+                    transaction = {"Category": payment_category, "Amount Paid (₹)": payment_amount, "username": username}
                     st.session_state["transactions"].append(transaction)
                     transactions_collection.insert_one(transaction)
                 st.success(payment_status)
 
             # Save budget data
             if st.button("Save Budget Data"):
-                budget_collection.delete_many({})
+                budget_collection.delete_many({"username": username})
                 budget_collection.insert_many(budget_df.to_dict("records"))
                 st.success("Budget data saved successfully!")
 
@@ -218,7 +215,8 @@ def main_app():
                     "Stock Name": stock_name,
                     "Stock Price": stock_price,
                     "Quantity": stock_quantity,
-                    "Total Cost": total_cost
+                    "Total Cost": total_cost,
+                    "username": username  # Save stock purchase to the user's profile
                 }
                 stocks_collection.insert_one(stock_purchase)
                 st.session_state["stock_purchases"].append(stock_purchase)
@@ -235,33 +233,7 @@ def main_app():
 
     elif menu == "Stock Learning":
         st.title("📘 Stock Learning Center")
-
-        st.markdown("### What is the Stock Market?")
-        st.write("""The stock market is a platform where buyers and sellers trade shares of publicly listed companies.""")
-
-        st.markdown("### Key Terms")
-        st.write("""- **Ticker Symbol**: A unique series of letters representing a stock (e.g., AAPL for Apple Inc.).""")
-
-        st.markdown("### Learn with Video Tutorials")
-        st.video("https://youtu.be/Ao7WHrRw_VM?si=Gzzyw8WQn-d60eiS")
-        st.video("https://youtu.be/RfOKl-ya5BY?si=yP1ConXI5nkmuGX_")
-
-        st.markdown("### Visualize Historical Stock Data")
-        stock_ticker = st.text_input("Enter a stock ticker to visualize historical data (e.g., AAPL, TSLA):")
-        if st.button("Show Data"):
-            if stock_ticker:
-                try:
-                    stock_data = yf.Ticker(stock_ticker).history(period="6mo")
-                    if not stock_data.empty:
-                        st.line_chart(stock_data["Close"])
-                        st.write("Historical Data (Last 6 Months):")
-                        st.dataframe(stock_data)
-                    else:
-                        st.warning("No data found for the given ticker. Please try another one.")
-                except Exception as e:
-                    st.error(f"Error fetching data: {e}")
-            else:
-                st.warning("Please enter a valid stock ticker.")
+        # Content for stock learning section
 
 # ----------------- Run App -----------------
 if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
