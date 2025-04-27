@@ -1,219 +1,270 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import pymongo
+import yfinance as yf
+import os
+
 from modules.data_processing import calculate_budget, update_budget
 from modules.eda import generate_pie_chart
 from modules.upi_integration import process_payment
-from modules.stock_prediction import predict_stock_prices  # Module for stock prediction
-import pymongo
-import yfinance as yf  
+from modules.stock_prediction import predict_stock_prices  # Your stock prediction module
 
-# Initialize MongoDB client
-client = pymongo.MongoClient("mongodb://localhost:27017/")
-db = client["financial_ai"]  # Database name
-budget_collection = db["budget"]  # Collection name for budget data
-transactions_collection = db["transactions"]  # Collection name for transactions
-stocks_collection = db["stocks"]  # Collection name for stock purchases
+# MongoDB Connection
+mongo_uri = os.getenv("MONGO_URI", "mongodb+srv://Jai:Jai07ihub@cluster0.k4pik.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+try:
+    client.server_info()
+except pymongo.errors.ServerSelectionTimeoutError as err:
+    st.error("Cannot connect to MongoDB. Please check your connection.")
+    st.stop()
 
-# Load budget from MongoDB
+db = client["financial_ai"]
+budget_collection = db["budget"]
+transactions_collection = db["transactions"]
+stocks_collection = db["stocks"]
+users_collection = db["users"]  # Collection for user authentication
+
+# ----------------- Authentication Functions -----------------
+def signup_user(username, password):
+    if users_collection.find_one({"username": username}):
+        return False, "Username already exists!"
+    users_collection.insert_one({"username": username, "password": password})
+    return True, "User registered successfully!"
+
+def login_user(username, password):
+    user = users_collection.find_one({"username": username, "password": password})
+    if user:
+        return True
+    return False
+
+def show_login_signup():
+    st.title("🔒 Welcome to Financial AI Assistant")
+    option = st.radio("Select Option:", ["Login", "Sign Up"])
+
+    username = st.text_input("Username")
+
+    if option == "Login":
+        password = st.text_input("Password", type="password")
+
+        if st.button("Login"):
+            if login_user(username, password):
+                st.success("Login successful!")
+                st.session_state["authenticated"] = True
+                st.session_state["username"] = username
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
+
+    elif option == "Sign Up":
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+
+        if st.button("Sign Up"):
+            if password != confirm_password:
+                st.error("Passwords do not match!")
+            elif not username or not password:
+                st.error("Username and password cannot be empty.")
+            else:
+                success, msg = signup_user(username, password)
+                if success:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+
+# ----------------- Profile and Logout Functions -----------------
+def show_profile():
+    username = st.session_state["username"]
+    st.title(f"👤 {username}'s Profile")
+
+    # Display basic user details (here, we just show the username)
+    st.write(f"### Username: {username}")
+    
+    # You can add more user information here (e.g., email, user preferences, etc.)
+    # For now, we show only the username.
+    
+    # Add logout button
+    if st.button("Logout"):
+        st.session_state["authenticated"] = False
+        del st.session_state["username"]
+        st.success("You have logged out successfully.")
+        st.rerun()  # Reload the page to show the login/signup screen
+
+# ----------------- Load Data Functions -----------------
 def load_budget():
     budget_data = list(budget_collection.find({}, {"_id": 0}))
     if budget_data:
         return pd.DataFrame(budget_data)
     return None
 
-# Load transactions from MongoDB
 def load_transactions():
     transactions = list(transactions_collection.find({}, {"_id": 0}))
     if transactions:
         return transactions
     return []
 
-# Load stock purchases from MongoDB
 def load_stock_purchases():
     stock_data = list(stocks_collection.find({}, {"_id": 0}))
     if stock_data:
         return stock_data
     return []
 
-# Initialize session state for budget and transactions
-if "budget_data" not in st.session_state:
-    st.session_state["budget_data"] = load_budget()
+# ----------------- Main App -----------------
+def main_app():
+    username = st.session_state["username"]
 
-if "transactions" not in st.session_state:
-    st.session_state["transactions"] = load_transactions()
+    # Initialize session state for budget and transactions
+    if "budget_data" not in st.session_state:
+        st.session_state["budget_data"] = load_budget()
 
-if "stock_purchases" not in st.session_state:
-    st.session_state["stock_purchases"] = load_stock_purchases()
+    if "transactions" not in st.session_state:
+        st.session_state["transactions"] = load_transactions()
 
-# App configuration
-st.set_page_config(page_title="Financial AI Assistant", page_icon="💸", layout="wide")
+    if "stock_purchases" not in st.session_state:
+        st.session_state["stock_purchases"] = load_stock_purchases()
 
-# Sidebar navigation
-menu = st.sidebar.radio("Navigation", ["Home", "Transaction History", "Stock Prediction","Stock Learning"])
+    st.set_page_config(page_title="Financial AI Assistant", page_icon="💸", layout="wide")
 
-# Page: Home
-if menu == "Home":
-    st.title("💸 Financial AI Assistant")
+    menu = st.sidebar.radio("Navigation", ["Home", "Transaction History", "Stock Prediction", "Stock Learning", "Profile"])
 
-    # Step 1: Input Monthly Income
-    st.markdown("### Enter Monthly Income")
-    income = st.number_input("Monthly Income (₹):", min_value=0, step=1000)
+    if menu == "Profile":
+        show_profile()
+    elif menu == "Home":
+        st.title("💸 Financial AI Assistant")
 
-    # Step 2: Automatically Generate Budget
-    if income > 0:
-        st.markdown("### Generated Budget")
-        categories = ["Housing", "Food", "Transportation", "Entertainment", "Utilities", "Savings"]
-        percentages = [30, 20, 15, 10, 10, 15]  # Budget percentages
+        # Step 1: Input Monthly Income
+        st.markdown("### Enter Monthly Income")
+        income = st.number_input("Monthly Income (₹):", min_value=0, step=1000)
 
-        if st.session_state["budget_data"] is None:
-            budget = calculate_budget(income, percentages)
-            st.session_state["budget_data"] = pd.DataFrame({"Category": categories, "Remaining Budget (₹)": budget})
+        # Step 2: Automatically Generate Budget
+        if income > 0:
+            st.markdown("### Generated Budget")
+            categories = ["Housing", "Food", "Transportation", "Entertainment", "Utilities", "Savings"]
+            percentages = [30, 20, 15, 10, 10, 15]  # Budget percentages
 
-        budget_df = st.session_state["budget_data"]
-        st.dataframe(budget_df)
+            if st.session_state["budget_data"] is None:
+                budget = calculate_budget(income, percentages)
+                st.session_state["budget_data"] = pd.DataFrame({"Category": categories, "Remaining Budget (₹)": budget})
 
-        # Expense distribution chart
-        st.markdown("### 📊 Expense Distribution")
-        fig = generate_pie_chart(budget_df["Remaining Budget (₹)"], budget_df["Category"])
-        st.pyplot(fig)
+            budget_df = st.session_state["budget_data"]
+            st.dataframe(budget_df)
 
-        # Payment Feature
-        st.markdown("### 💳 UPI Payment")
-        payment_category = st.selectbox("Select category to pay:", categories[:-1])  # Exclude "Savings"
-        payment_amount = st.number_input(f"Enter amount to pay for {payment_category}:", min_value=0, step=50)
+            # Expense distribution chart
+            st.markdown("### 📊 Expense Distribution")
+            fig = generate_pie_chart(budget_df["Remaining Budget (₹)"], budget_df["Category"])
+            st.pyplot(fig)
 
-        if st.button("Make Payment"):
-            # Update budget and transactions
-            payment_status, updated_budget = update_budget(
-                st.session_state["budget_data"], payment_category, payment_amount
-            )
-            st.session_state["budget_data"] = updated_budget
+            # Payment Feature
+            st.markdown("### 💳 UPI Payment")
+            payment_category = st.selectbox("Select category to pay:", categories[:-1])
+            payment_amount = st.number_input(f"Enter amount to pay for {payment_category}:", min_value=0, step=50)
 
-            if "paid" in payment_status:
-                transaction = {"Category": payment_category, "Amount Paid (₹)": payment_amount}
-                st.session_state["transactions"].append(transaction)
-                transactions_collection.insert_one(transaction)  # Save transaction to MongoDB
-            st.success(payment_status)
+            if st.button("Make Payment"):
+                payment_status, updated_budget = update_budget(
+                    st.session_state["budget_data"], payment_category, payment_amount
+                )
+                st.session_state["budget_data"] = updated_budget
 
-        # Save budget data
-        if st.button("Save Budget Data"):
-            budget_collection.delete_many({})  # Clear old data
-            budget_collection.insert_many(budget_df.to_dict("records"))  # Save new data
-            st.success("Budget data saved successfully!")
+                if "paid" in payment_status:
+                    transaction = {"Category": payment_category, "Amount Paid (₹)": payment_amount}
+                    st.session_state["transactions"].append(transaction)
+                    transactions_collection.insert_one(transaction)
+                st.success(payment_status)
 
-    else:
-        st.warning("Please enter your monthly income to generate the budget.")
+            # Save budget data
+            if st.button("Save Budget Data"):
+                budget_collection.delete_many({})
+                budget_collection.insert_many(budget_df.to_dict("records"))
+                st.success("Budget data saved successfully!")
 
-# Page: Transaction History
-elif menu == "Transaction History":
-    st.title("📜 Transaction History")
-
-    # Display transaction history
-    if st.session_state["transactions"]:
-        st.markdown("### Payments Made")
-        transactions_df = pd.DataFrame(st.session_state["transactions"])
-        st.dataframe(transactions_df)
-
-        # Display updated budget
-        st.markdown("### Updated Budget")
-        st.dataframe(st.session_state["budget_data"])
-    else:
-        st.info("No transactions made yet.")
-
-# Page: Stock Prediction
-elif menu == "Stock Prediction":
-    st.title("📈 Stock Prediction and Investment")
-
-    # Step 1: Input stock ticker
-    st.markdown("### Enter Stock Details")
-    stock_ticker = st.text_input("Stock Ticker (e.g., AAPL, TSLA):")
-
-    # Step 2: Predict stock prices
-    if st.button("Predict Stock Prices"):
-        if stock_ticker:
-            predicted_prices = predict_stock_prices(stock_ticker)
-            st.line_chart(predicted_prices)
         else:
-            st.warning("Please enter a valid stock ticker.")
+            st.warning("Please enter your monthly income to generate the budget.")
 
-    # Step 3: Buy stocks
-    st.markdown("### Buy Stocks")
-    stock_name = st.text_input("Stock Name:")
-    stock_price = st.number_input("Stock Price (₹):", min_value=0.0, step=0.01)
-    stock_quantity = st.number_input("Quantity:", min_value=1, step=1)
+    elif menu == "Transaction History":
+        st.title("📜 Transaction History")
 
-    if st.button("Buy Stock"):
-        if stock_name and stock_price > 0 and stock_quantity > 0:
-            total_cost = stock_price * stock_quantity
-            stock_purchase = {
-                "Stock Name": stock_name,
-                "Stock Price": stock_price,
-                "Quantity": stock_quantity,
-                "Total Cost": total_cost
-            }
+        if st.session_state["transactions"]:
+            st.markdown("### Payments Made")
+            transactions_df = pd.DataFrame(st.session_state["transactions"])
+            st.dataframe(transactions_df)
 
-            # Save to MongoDB
-            stocks_collection.insert_one(stock_purchase)
-
-            # Update session state
-            st.session_state["stock_purchases"].append(stock_purchase)
-            st.success(f"Successfully purchased {stock_quantity} of {stock_name} for ₹{total_cost}.")
+            st.markdown("### Updated Budget")
+            st.dataframe(st.session_state["budget_data"])
         else:
-            st.warning("Please fill in all fields correctly.")
+            st.info("No transactions made yet.")
 
-    # Display purchase history
-    st.markdown("### Purchase History")
-    if st.session_state["stock_purchases"]:
-        purchases_df = pd.DataFrame(st.session_state["stock_purchases"])
-        st.dataframe(purchases_df)
-    else:
-        st.info("No stocks purchased yet.")
+    elif menu == "Stock Prediction":
+        st.title("📈 Stock Prediction and Investment")
 
-elif menu == "Stock Learning":
-    st.title("📘 Stock Learning Center")
+        st.markdown("### Enter Stock Details")
+        stock_ticker = st.text_input("Stock Ticker (e.g., AAPL, TSLA):")
 
-    # Section 1: Basics of Stock Market
-    st.markdown("### What is the Stock Market?")
-    st.write("""
-    The stock market is a platform where buyers and sellers trade shares of publicly listed companies. 
-    Shares represent partial ownership of a company. Investors buy shares hoping their value will increase over time.
-    """)
+        if st.button("Predict Stock Prices"):
+            if stock_ticker:
+                predicted_prices = predict_stock_prices(stock_ticker)
+                st.line_chart(predicted_prices)
+            else:
+                st.warning("Please enter a valid stock ticker.")
 
-    # Section 2: Important Terms
-    st.markdown("### Key Terms")
-    st.write("""
-    - **Ticker Symbol**: A unique series of letters representing a stock (e.g., AAPL for Apple Inc.).
-    - **Stock Price**: The current market price of a single share of a stock.
-    - **Quantity**: The number of shares you want to buy or sell.
-    - **Total Cost**: The total amount spent on purchasing stocks (Price × Quantity).
-    """)
+        st.markdown("### Buy Stocks")
+        stock_name = st.text_input("Stock Name:")
+        stock_price = st.number_input("Stock Price (₹):", min_value=0.0, step=0.01)
+        stock_quantity = st.number_input("Quantity:", min_value=1, step=1)
 
-    # Section 3: Embedded YouTube Tutorials
-    st.markdown("### Learn with Video Tutorials")
-    st.write("Here are some helpful YouTube videos to get you started with stock trading and investment:")
+        if st.button("Buy Stock"):
+            if stock_name and stock_price > 0 and stock_quantity > 0:
+                total_cost = stock_price * stock_quantity
+                stock_purchase = {
+                    "Stock Name": stock_name,
+                    "Stock Price": stock_price,
+                    "Quantity": stock_quantity,
+                    "Total Cost": total_cost
+                }
+                stocks_collection.insert_one(stock_purchase)
+                st.session_state["stock_purchases"].append(stock_purchase)
+                st.success(f"Successfully purchased {stock_quantity} of {stock_name} for ₹{total_cost}.")
+            else:
+                st.warning("Please fill in all fields correctly.")
 
-    # Embed YouTube Tutorials
-    st.video("https://youtu.be/Ao7WHrRw_VM?si=Gzzyw8WQn-d60eiS")  # Stock Market Basics
-    st.video("https://youtu.be/RfOKl-ya5BY?si=yP1ConXI5nkmuGX_")  # Stock Investing for Beginners
-    st.video("https://youtu.be/p7HKvqRI_Bo?si=MboYNVUaHvH9G_hm")
-    st.video("https://youtu.be/Uw_QyeHo8f0?si=OP1R4QVkfRqe6hb8")
-
-    # Section 4: Visualize Historical Data
-    st.markdown("### Visualize Historical Stock Data")
-    stock_ticker = st.text_input("Enter a stock ticker to visualize historical data (e.g., AAPL, TSLA):")
-    if st.button("Show Data"):
-        if stock_ticker:
-            try:
-                # Fetch historical stock data using yfinance
-                stock_data = yf.Ticker(stock_ticker).history(period="6mo")  # Last 6 months
-                if not stock_data.empty:
-                    st.line_chart(stock_data["Close"])  # Display the closing prices
-                    st.write("Historical Data (Last 6 Months):")
-                    st.dataframe(stock_data)
-                else:
-                    st.warning("No data found for the given ticker. Please try another one.")
-            except Exception as e:
-                st.error(f"Error fetching data: {e}")
+        st.markdown("### Purchase History")
+        if st.session_state["stock_purchases"]:
+            purchases_df = pd.DataFrame(st.session_state["stock_purchases"])
+            st.dataframe(purchases_df)
         else:
-            st.warning("Please enter a valid stock ticker.")
+            st.info("No stocks purchased yet.")
+
+    elif menu == "Stock Learning":
+        st.title("📘 Stock Learning Center")
+
+        st.markdown("### What is the Stock Market?")
+        st.write("""The stock market is a platform where buyers and sellers trade shares of publicly listed companies.""")
+
+        st.markdown("### Key Terms")
+        st.write("""- **Ticker Symbol**: A unique series of letters representing a stock (e.g., AAPL for Apple Inc.).""")
+
+        st.markdown("### Learn with Video Tutorials")
+        st.video("https://youtu.be/Ao7WHrRw_VM?si=Gzzyw8WQn-d60eiS")
+        st.video("https://youtu.be/RfOKl-ya5BY?si=yP1ConXI5nkmuGX_")
+
+        st.markdown("### Visualize Historical Stock Data")
+        stock_ticker = st.text_input("Enter a stock ticker to visualize historical data (e.g., AAPL, TSLA):")
+        if st.button("Show Data"):
+            if stock_ticker:
+                try:
+                    stock_data = yf.Ticker(stock_ticker).history(period="6mo")
+                    if not stock_data.empty:
+                        st.line_chart(stock_data["Close"])
+                        st.write("Historical Data (Last 6 Months):")
+                        st.dataframe(stock_data)
+                    else:
+                        st.warning("No data found for the given ticker. Please try another one.")
+                except Exception as e:
+                    st.error(f"Error fetching data: {e}")
+            else:
+                st.warning("Please enter a valid stock ticker.")
+
+# ----------------- Run App -----------------
+if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
+    show_login_signup()
+else:
+    main_app()
