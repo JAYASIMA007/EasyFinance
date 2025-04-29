@@ -1,3 +1,4 @@
+# ------------------------ Imports ------------------------
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -10,9 +11,16 @@ from modules.eda import generate_pie_chart
 from modules.upi_integration import process_payment
 from modules.stock_prediction import predict_stock_prices
 
-# MongoDB Connection
-mongo_uri = os.getenv("MONGO_URI", "mongodb+srv://Jai:Jai07ihub@cluster0.k4pik.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+# ------------------ Set Page Config (MUST BE FIRST) ------------------
+st.set_page_config(page_title="Financial AI Assistant", page_icon="💸", layout="wide")
+
+# ------------------------ MongoDB Connection ------------------------
+mongo_uri = os.getenv(
+    "MONGO_URI",
+    "mongodb+srv://Jai:Jai07ihub@cluster0.k4pik.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+)
 client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+
 try:
     client.server_info()
 except pymongo.errors.ServerSelectionTimeoutError as err:
@@ -25,7 +33,7 @@ transactions_collection = db["transactions"]
 stocks_collection = db["stocks"]
 users_collection = db["users"]
 
-# ----------------- Authentication Functions -----------------
+# ------------------ Authentication Functions ------------------
 def signup_user(username, password):
     if users_collection.find_one({"username": username}):
         return False, "Username already exists!"
@@ -77,40 +85,87 @@ def show_profile():
     username = st.session_state["username"]
     st.title(f"👤 {username}'s Profile")
 
-    # Display basic user details (here, we just show the username)
     st.write(f"### Username: {username}")
-    
-    # Add logout button
+
+    # --- Monthly Income ---
+    st.subheader("💰 Monthly Income")
+    budget_df = st.session_state.get("budget_data")
+    if budget_df is not None:
+        total_income = budget_df["Remaining Budget (₹)"].sum()
+        st.write(f"**Estimated Monthly Income:** ₹{total_income:,.2f}")
+    else:
+        st.info("Income not set. Go to Home to generate budget.")
+
+    # --- Monthly Expenses ---
+    st.subheader("📉 Monthly Expenses")
+    transactions = st.session_state.get("transactions", [])
+    if transactions:
+        expenses_df = pd.DataFrame(transactions)
+        total_expenses = expenses_df["Amount Paid (₹)"].sum()
+        st.write(f"**Total Monthly Expenses:** ₹{total_expenses:,.2f}")
+        st.dataframe(expenses_df)
+
+        # Pie Chart for Category-wise Expenses
+        category_expenses = expenses_df.groupby("Category")["Amount Paid (₹)"].sum()
+        fig1, ax1 = plt.subplots()
+        ax1.pie(category_expenses, labels=category_expenses.index, autopct='%1.1f%%', startangle=90)
+        ax1.axis('equal')
+        st.markdown("#### 📌 Expense Distribution by Category")
+        st.pyplot(fig1)
+
+        # Bar Chart for Income vs Expenses
+        st.markdown("#### 📊 Monthly Income vs Expenses")
+        fig2, ax2 = plt.subplots()
+        ax2.bar(["Income", "Expenses"], [total_income, total_expenses], color=["green", "red"])
+        ax2.set_ylabel("Amount (₹)")
+        ax2.set_title("Income vs Expenses")
+        st.pyplot(fig2)
+    else:
+        st.info("No expenses recorded yet.")
+
+    # --- Stock Portfolio ---
+    st.subheader("📈 Stock Portfolio")
+    stock_purchases = st.session_state.get("stock_purchases", [])
+    if stock_purchases:
+        stock_df = pd.DataFrame(stock_purchases)
+        total_investment = stock_df["Total Cost"].sum()
+        st.write(f"**Total Investment in Stocks:** ₹{total_investment:,.2f}")
+        st.dataframe(stock_df)
+
+        # Pie Chart of Investment per Stock
+        stock_investment = stock_df.groupby("Stock Name")["Total Cost"].sum()
+        fig3, ax3 = plt.subplots()
+        ax3.pie(stock_investment, labels=stock_investment.index, autopct='%1.1f%%', startangle=90)
+        ax3.axis('equal')
+        st.markdown("#### 🧾 Investment Distribution by Stock")
+        st.pyplot(fig3)
+    else:
+        st.info("No stocks purchased yet.")
+
+    # --- Logout Button ---
     if st.button("Logout"):
         st.session_state["authenticated"] = False
         del st.session_state["username"]
         st.success("You have logged out successfully.")
-        st.rerun()  # Reload the page to show the login/signup screen
+        st.rerun()
 
-# ----------------- Load Data Functions -----------------
+# ------------------ Load Data Functions ------------------
 def load_budget(username):
     budget_data = list(budget_collection.find({"username": username}, {"_id": 0}))
-    if budget_data:
-        return pd.DataFrame(budget_data)
-    return None
+    return pd.DataFrame(budget_data) if budget_data else None
 
 def load_transactions(username):
     transactions = list(transactions_collection.find({"username": username}, {"_id": 0}))
-    if transactions:
-        return transactions
-    return []
+    return transactions if transactions else []
 
 def load_stock_purchases(username):
     stock_data = list(stocks_collection.find({"username": username}, {"_id": 0}))
-    if stock_data:
-        return stock_data
-    return []
+    return stock_data if stock_data else []
 
-# ----------------- Main App -----------------
+# ------------------ Main Application ------------------
 def main_app():
     username = st.session_state["username"]
 
-    # Initialize session state for budget and transactions
     if "budget_data" not in st.session_state:
         st.session_state["budget_data"] = load_budget(username)
 
@@ -120,24 +175,21 @@ def main_app():
     if "stock_purchases" not in st.session_state:
         st.session_state["stock_purchases"] = load_stock_purchases(username)
 
-    st.set_page_config(page_title="Financial AI Assistant", page_icon="💸", layout="wide")
-
     menu = st.sidebar.radio("Navigation", ["Home", "Transaction History", "Stock Prediction", "Stock Learning", "Profile"])
 
     if menu == "Profile":
         show_profile()
+
     elif menu == "Home":
         st.title("💸 Financial AI Assistant")
 
-        # Step 1: Input Monthly Income
         st.markdown("### Enter Monthly Income")
         income = st.number_input("Monthly Income (₹):", min_value=0, step=1000)
 
-        # Step 2: Automatically Generate Budget
         if income > 0:
             st.markdown("### Generated Budget")
             categories = ["Housing", "Food", "Transportation", "Entertainment", "Utilities", "Savings"]
-            percentages = [30, 20, 15, 10, 10, 15]  # Budget percentages
+            percentages = [30, 20, 15, 10, 10, 15]
 
             if st.session_state["budget_data"] is None:
                 budget = calculate_budget(income, percentages)
@@ -146,12 +198,10 @@ def main_app():
             budget_df = st.session_state["budget_data"]
             st.dataframe(budget_df)
 
-            # Expense distribution chart
             st.markdown("### 📊 Expense Distribution")
             fig = generate_pie_chart(budget_df["Remaining Budget (₹)"], budget_df["Category"])
             st.pyplot(fig)
 
-            # Payment Feature
             st.markdown("### 💳 UPI Payment")
             payment_category = st.selectbox("Select category to pay:", categories[:-1])
             payment_amount = st.number_input(f"Enter amount to pay for {payment_category}:", min_value=0, step=50)
@@ -166,9 +216,9 @@ def main_app():
                     transaction = {"Category": payment_category, "Amount Paid (₹)": payment_amount, "username": username}
                     st.session_state["transactions"].append(transaction)
                     transactions_collection.insert_one(transaction)
+
                 st.success(payment_status)
 
-            # Save budget data
             if st.button("Save Budget Data"):
                 budget_collection.delete_many({"username": username})
                 budget_collection.insert_many(budget_df.to_dict("records"))
@@ -216,7 +266,7 @@ def main_app():
                     "Stock Price": stock_price,
                     "Quantity": stock_quantity,
                     "Total Cost": total_cost,
-                    "username": username  # Save stock purchase to the user's profile
+                    "username": username
                 }
                 stocks_collection.insert_one(stock_purchase)
                 st.session_state["stock_purchases"].append(stock_purchase)
@@ -233,10 +283,25 @@ def main_app():
 
     elif menu == "Stock Learning":
         st.title("📘 Stock Learning Center")
-        # Content for stock learning section
 
-# ----------------- Run App -----------------
-if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-    show_login_signup()
-else:
-    main_app()
+        st.markdown("### What is the Stock Market?")
+        st.write("""The stock market is a platform where buyers and sellers trade shares of publicly listed companies.""")
+
+        st.markdown("### Key Terms")
+        st.write("""- **Ticker Symbol**: A unique series of letters representing a stock (e.g., AAPL for Apple Inc.).""")
+
+        st.markdown("### Learn with Video Tutorials")
+        st.video("https://youtu.be/Ao7WHrRw_VM?si=Gzzyw8WQn-d60eiS")
+        st.video("https://youtu.be/RfOKl-ya5BY?si=yP1ConXI5nkmuGX_")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("💬 Need help? Chat with us!")
+if st.sidebar.button("Open Chatbot"):
+    st.sidebar.markdown("[👉 Click here to chat](http://localhost:5678/workflow/gLSX6bzc9unfUSxg)")
+
+# ------------------ Run the App ------------------
+if __name__ == "__main__":
+    if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
+        show_login_signup()
+    else:
+        main_app()
